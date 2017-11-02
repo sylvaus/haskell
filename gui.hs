@@ -1,5 +1,5 @@
 {--------------------------------------------------------------------------------
-  Bouncing Balls demo
+  Attraction planets demo
 --------------------------------------------------------------------------------}
 module Main where
   
@@ -27,35 +27,36 @@ scaleVector2D :: Vector2D -> Float -> Vector2D
 scaleVector2D vector scale = Vector2D {x = (x vector * scale), y =  (y vector * scale)}
 
 computeForce :: Planet -> Planet -> Vector2D
-computeForce planet planed_acted_on
+computeForce (Planet _ _ planet_position _ planet_mass) (Planet _ _ other_planet_position _ other_planet_mass)
   = force
   where
-    r = subVector2D (position planet) (position planed_acted_on)
+    r = subVector2D planet_position other_planet_position
     r_norm = (normVector2D r)
-    r3 = ((maximum [abs(r_norm), radiusF * 2.0]) ** 3) * sign r_norm
-    force = scaleVector2D r (gravityCoeff * mass planet * mass planed_acted_on / r3)
+    r3 = ((maximum [abs(r_norm), (fromIntegral planetRadius) * 2.0]) ** 3) * sign r_norm
+    force = scaleVector2D r (gravityCoeff * planet_mass * other_planet_mass / r3)
+
 
 applyAttraction :: Float -> Planet -> [Planet] -> Planet
-applyAttraction delta_time planet planets
+applyAttraction delta_time planet@(Planet index' radius' position' velocity' mass') planets
     = new_planet
     where 
-      forces = [computeForce other_planet planet | other_planet <- planets, (index planet /= index other_planet)]
+      forces = [computeForce other_planet planet | other_planet <- planets, (index' /= index other_planet)]
       force = foldr addVector2D (Vector2D 0 0) (forces)
-      new_velocity = addVector2D (velocity planet) (scaleVector2D force (delta_time / mass planet))
-      new_position = addVector2D (position planet) (scaleVector2D new_velocity delta_time)
-      new_planet = Planet (index planet) (radius planet) new_position new_velocity (mass planet)
+      new_velocity = addVector2D velocity' (scaleVector2D force (delta_time / mass'))
+      new_position = addVector2D position' (scaleVector2D new_velocity delta_time)
+      new_planet = Planet index' radius' new_position new_velocity mass'
 
 main :: IO ()
 main
- = run ballsFrame
+ = run planetsFrame
 
-ballsFrame :: IO ()
-ballsFrame
-  = do -- a list of balls, where each ball is represented by a list of all future Y positions.
-    vballs <- varCreate [(Planet 0 radiusI (Vector2D (maxXF/2) (maxYF/2)) (Vector2D 0 0) 10000.0)]
+planetsFrame :: IO ()
+planetsFrame
+  = do -- a list of planets, where each ball is represented by a list of all future Y positions.
+    vplanets <- varCreate [(Planet 0 planetRadius (Vector2D (fromIntegral maxX / 2) (fromIntegral maxY / 2)) (Vector2D 0 0) 10000.0)]
 
     -- create a non-user-resizable top-level (orphan) frame.
-    f <- frameCreate objectNull idAny "Bouncing balls" rectNull
+    f <- frameCreate objectNull idAny "Planets Attraction" rectNull
                       ( wxMINIMIZE_BOX + wxSYSTEM_MENU + wxCAPTION + wxNO_FULL_REPAINT_ON_RESIZE
                       + wxCLIP_CHILDREN + wxCLOSE_BOX)
     
@@ -65,15 +66,15 @@ ballsFrame
     _ <- windowSetBackgroundColour f $ colorSystem Color3DFace
     windowSetLayout f (column 1 [ minsize (sz maxX maxY) (widget p)])
     
-                                -- create a timer, on each tick it advances all the balls to their next position
+                                -- create a timer, on each tick it advances all the planets to their next position
     t <- windowTimerCreate f
-    timerOnCommand t (nextBalls p vballs)
+    timerOnCommand t (nextPlanets p vplanets)
     
-    -- paint the balls unbuffered
-    windowOnPaintRaw p (paintBalls vballs)
+    -- paint the planets unbuffered
+    windowOnPaintRaw p (paintplanets vplanets)
     
     -- left-click: new ball, right-click: new window
-    windowOnMouse p False {- no motion events -} (onMouse p vballs)
+    windowOnMouse p False {- no motion events -} (onMouse p vplanets)
     
     -- show the frame
     _ <- windowShow f
@@ -85,10 +86,10 @@ ballsFrame
   
   where
     -- react on mouse events
-    onMouse w vballs mouse
+    onMouse w vplanets mouse
       = case mouse of
-          MouseLeftDown  pt_ _mods -> addPlanet w vballs pt_ -- new ball
-          MouseRightDown _pt _mods -> ballsFrame            -- new window with bouncing balls
+          MouseLeftDown  pt_ _mods -> addPlanet w vplanets pt_ -- new ball
+          MouseRightDown _pt _mods -> planetsFrame            -- new window with bouncing planets
           _other                   -> skipCurrentEvent      -- unprocessed event: send up the window chain
   
     updateInterval t f
@@ -97,49 +98,41 @@ ballsFrame
            _ <- timerStart t (f i) False
            return ()
   
-    -- advance all the balls to their next position
-    nextBalls w vballs
+    -- Update planet positions
+    nextPlanets w vplanets
       = do
-        planets <- varGet vballs
-        varUpdate vballs (map (\planet -> applyAttraction (fromIntegral deltaTimeMs * 0.001) planet planets)) >> windowRefresh w False
+        planets <- varGet vplanets
+        varUpdate vplanets (map (\planet -> applyAttraction (fromIntegral deltaTimeMs * 0.001) planet planets)) >> windowRefresh w False
   
     -- add a new ball
-    addPlanet w vballs pt_
+    addPlanet w vplanets (Point x' y')
       = do 
-        balls <- varGet vballs
-        varUpdate vballs ((Planet (length balls) radiusI position velocity 100.0):) >> windowRefresh w False
+        planets <- varGet vplanets
+        varUpdate vplanets ((Planet (length planets) planetRadius position velocity 100.0):) >> windowRefresh w False
       where 
-        x = fromIntegral (pointX pt_)
-        y = fromIntegral (pointY pt_)
-        position = Vector2D x y
+        position = Vector2D (fromIntegral x') (fromIntegral y')
         velocity = Vector2D 0 0
 
   
-    -- paint the balls
-    paintBalls vballs dc _viewRect _updateAreas
+    -- paint the planets
+    paintplanets vplanets dc _viewRect _updateAreas
       = do dcClear dc
-           balls <- varGet vballs
+           planets <- varGet vplanets
            dcWithBrushStyle dc (BrushStyle BrushSolid red) $
-             mapM_ (drawBall dc) balls
+             mapM_ (drawBall dc) planets
   
-    drawBall dc planet
-      = dcDrawCircle dc point (radius planet)
+    drawBall dc (Planet _ radius' (Vector2D x' y') _ _)
+      = dcDrawCircle dc point radius'
       where 
-        pose = position planet
-        x_pose = x pose
-        y_pose = y pose
-        point = Point (round x_pose) (round y_pose) 
+        point = Point (round x') (round y') 
   
 
 -- radius the ball, and the maximal x and y coordinates
-deltaTimeMs, radiusI, maxX, maxY :: Int
+deltaTimeMs, planetRadius, maxX, maxY :: Int
 deltaTimeMs = 10
-radiusI = 10
+planetRadius = 10
 maxY   = 800
 maxX   = 1000
 
-gravityCoeff, maxXF, maxYF :: Float
+gravityCoeff :: Float
 gravityCoeff = 1000.0
-radiusF = fromIntegral radiusI
-maxYF   = fromIntegral maxY
-maxXF   = fromIntegral maxX
